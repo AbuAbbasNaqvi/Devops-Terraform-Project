@@ -1,0 +1,91 @@
+pipeline {
+    agent any
+
+    environment {
+        GITOPS_REPO = 'https://github.com/your-org/your-gitops-repo.git'
+        GITOPS_BRANCH = 'main'
+        K8S_MANIFEST_PATH = 'manifests/'
+        DOCKER_IMAGE = 'your-docker-repo/your-app'
+        DOCKER_TAG = 'latest'
+        KUBECTL_PATH = '/usr/local/bin/kubectl'
+        ARGOCD_CLI_PATH = '/usr/local/bin/argocd'
+        ARGOCD_SERVER = 'argocd.yourdomain.com'
+        ARGOCD_APP_NAME = 'your-app'
+    }
+
+    stages {
+        stage('Checkout Code') {
+            steps {
+                echo 'Checking out the GitOps repository...'
+                git branch: "${GITOPS_BRANCH}", url: "${GITOPS_REPO}"
+            }
+        }
+
+        stage('Build and Test') {
+            steps {
+                echo 'Building and testing the application...'
+                sh 'mvn clean install'
+                sh 'mvn sonar:sonar'
+            }
+        }
+
+        stage('Build Docker Image') {
+            steps {
+                echo 'Building Docker image...'
+                sh "docker build -t ${DOCKER_IMAGE}:${DOCKER_TAG} ."
+                echo 'Docker image built successfully.'
+            }
+        }
+
+        stage('Push Docker Image') {
+            steps {
+                echo 'Pushing Docker image to repository...'
+                sh "docker push ${DOCKER_IMAGE}:${DOCKER_TAG}"
+                echo 'Docker image pushed successfully.'
+            }
+        }
+
+        stage('Update GitOps Repository') {
+            steps {
+                echo 'Updating Kubernetes manifests in the GitOps repository...'
+                sh """
+                    sed -i 's|image:.*|image: ${DOCKER_IMAGE}:${DOCKER_TAG}|' ${K8S_MANIFEST_PATH}deployment.yaml
+                """
+                sh 'git add .'
+                sh 'git commit -m "Updated image to ${DOCKER_IMAGE}:${DOCKER_TAG}" || echo "No changes to commit"'
+                sh 'git push origin ${GITOPS_BRANCH}'
+                echo 'GitOps repository updated successfully.'
+            }
+        }
+
+        stage('Sync ArgoCD Application') {
+            steps {
+                echo 'Synchronizing ArgoCD application with the updated GitOps repository...'
+                sh """
+                    ${ARGOCD_CLI_PATH} login ${ARGOCD_SERVER} --username admin --password your-argocd-password --insecure
+                    ${ARGOCD_CLI_PATH} app sync ${ARGOCD_APP_NAME}
+                """
+                echo 'ArgoCD application synchronized successfully.'
+            }
+        }
+
+        stage('Deploy Application') {
+            steps {
+                echo 'Deploying application to EKS via ArgoCD...'
+                sh """
+                    ${KUBECTL_PATH} get pods -n your-namespace
+                """
+                echo 'Application deployment triggered and verified.'
+            }
+        }
+    }
+
+    post {
+        success {
+            echo 'Pipeline executed successfully!'
+        }
+        failure {
+            echo 'Pipeline failed. Please check the logs.'
+        }
+    }
+}
